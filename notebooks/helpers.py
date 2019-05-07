@@ -178,3 +178,27 @@ def customized_box_plot(percentiles, axes, redraw = True, *args, **kwargs):
         ax.figure.canvas.draw()
 
     return box_plot
+
+def clip_points_by_ecoregion(points_filepath, group, out_folder=None):
+    
+    eco_na1_name, eco_df = group
+    pts_df = gpd.read_file(points_filepath)
+    
+    year = list(pts_df.ACQ_DATE)[0].split('-')[0]
+    out_file_basename = os.path.basename(boundary_filepath)
+    out_file_basename = out_file_basename.split('.')[0]
+    eco_reg_name = eco_na1_name.replace(' ', '_')
+    out_filename = '{}_{}_pts_{}.shp'.format(out_file_basename, year, eco_reg_name)
+    
+    if out_folder is None:
+        out_fi = os.path.join(os.path.dirname(points_file_path), out_filename)
+    else:
+        out_fi = os.path.join(out_folder, out_filename)
+    
+    # clip the files
+    sub_df = clip_shp(pts_df, eco_df)
+    
+    # save it
+    sub_df.to_file(out_fi)
+    
+    return

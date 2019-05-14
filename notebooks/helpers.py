@@ -185,7 +185,7 @@ def clip_points_by_ecoregion(points_filepath, group, out_folder=None):
     pts_df = gpd.read_file(points_filepath)
     
     year = list(pts_df.ACQ_DATE)[0].split('-')[0]
-    out_file_basename = os.path.basename(boundary_filepath)
+    out_file_basename = os.path.basename(points_filepath)
     out_file_basename = out_file_basename.split('.')[0]
     eco_reg_name = eco_na1_name.replace(' ', '_')
     out_filename = '{}_{}_pts_{}.shp'.format(out_file_basename, year, eco_reg_name)

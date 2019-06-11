@@ -296,7 +296,7 @@ def create_global_agg_var_grid(shp_files, meta, agg=0.25, conf=0, out_folder='./
             # subset the dataframe by month and group by daynight
             df_sub = df.query('month == {}'.format(m))
             df_sub = df_sub.query('CONFIDENCE > {}'.format(conf))
-            daynight = list(df.groupby('DAYNIGHT'))
+            daynight = list(df_sub.groupby('DAYNIGHT'))
             df_day = daynight[0][1]
             df_night = daynight[1][1]
 

@@ -334,13 +334,21 @@ def create_global_agg_var_grid(shp_files, meta_file, agg=0.25, conf=1, type_code
             # get the month name for filenaming
             month_name = months[m-1]
 
+            ### edit 9.17.2019 -- try-except due to type not existing in provisional data. continue...
             # subset the dataframe by month and group by daynight
-            df_sub = df.query('month == {}'.format(m))
-            df_sub = df_sub.query('CONFIDENCE > {}'.format(conf))
-            df_sub = df_sub.query('TYPE == {}'.format(type_code))
-            daynight = list(df_sub.groupby('DAYNIGHT'))
-            df_day = daynight[0][1]
-            df_night = daynight[1][1]
+            try:
+            
+                df_sub = df.query('month == {}'.format(m))
+                df_sub = df_sub.query('CONFIDENCE > {}'.format(conf))
+                df_sub = df_sub.query('TYPE == {}'.format(type_code))
+                daynight = list(df_sub.groupby('DAYNIGHT'))
+                df_day = daynight[0][1]
+                df_night = daynight[1][1]
+            
+            except Exception as e:
+                
+                print(e)
+                continue
 
             ##################
             ## AGGREGATIONS ##
@@ -560,13 +568,21 @@ def create_global_agg_CONF_grid(shp_files, meta_file, agg=0.25, conf=1, type_cod
             # get the month name for filenaming
             month_name = months[m-1]
 
+            ### edit 9.17.2019 -- try-except due to type not existing in provisional data. continue...
             # subset the dataframe by month and group by daynight
-            df_sub = df.query('month == {}'.format(m))
-            df_sub = df_sub.query('CONFIDENCE > {}'.format(conf))
-            df_sub = df_sub.query('TYPE == {}'.format(type_code))
-            daynight = list(df_sub.groupby('DAYNIGHT'))
-            df_day = daynight[0][1]
-            df_night = daynight[1][1]
+            try:
+            
+                df_sub = df.query('month == {}'.format(m))
+                df_sub = df_sub.query('CONFIDENCE > {}'.format(conf))
+                df_sub = df_sub.query('TYPE == {}'.format(type_code))
+                daynight = list(df_sub.groupby('DAYNIGHT'))
+                df_day = daynight[0][1]
+                df_night = daynight[1][1]
+            
+            except Exception as e:
+                
+                print(e)
+                continue
 
             ##################
             ## AGGREGATIONS ##

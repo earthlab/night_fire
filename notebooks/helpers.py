@@ -9,6 +9,24 @@ import rasterio as rio
 from rasterio import features
 import pickle
 
+from matplotlib import pyplot as plt
+from glob import glob
+
+from earthpy.spatial import stack
+import xarray as xr
+
+import pickle
+
+# aggregating
+from skimage.transform import rescale, resize, downscale_local_mean
+
+# mapping
+import cartopy
+import cartopy.crs as ccrs
+
+import warnings
+warnings.filterwarnings('ignore')
+
 def extract_day_night_counts(filepath, conf=50):
     
     
@@ -645,4 +663,266 @@ def create_global_agg_CONF_grid(shp_files, meta_file, agg=0.25, conf=1, type_cod
                             burned = features.rasterize(shapes=shapes, fill=0, out=out_arr, transform=out.transform)
                             out.write_band(1, burned)
                             
-               
+def lag_linregress_3D(x, y, lagx=0, lagy=0, n_obs=3):
+    """
+    https://hrishichandanpurkar.blogspot.com/2017/09/vectorized-functions-for-correlation.html
+    Input: Two xr.Datarrays of any dimensions with the first dim being time. 
+    Thus the input data could be a 1D time series, or for example, have three 
+    dimensions (time,lat,lon). 
+    
+    Datasets can be provided in any order, but note that the regression slope 
+    and intercept will be calculated for y with respect to x.
+    
+    
+    Output: Covariance, correlation, regression slope and intercept, p-value, 
+    and standard error on regression between the two datasets along their 
+    aligned time dimension. 
+    
+    Lag values can be assigned to either of the data, with lagx shifting x, and
+    lagy shifting y, with the specified lag amount. 
+    """ 
+    #1. Ensure that the data are properly alinged to each other. 
+    x,y = xr.align(x,y)
+
+    #2. Add lag information if any, and shift the data accordingly
+    if lagx!=0:
+
+        # If x lags y by 1, x must be shifted 1 step backwards. 
+        # But as the 'zero-th' value is nonexistant, xr assigns it as invalid 
+        # (nan). Hence it needs to be dropped
+        x   = x.shift(time = -lagx).dropna(dim='time') 
+
+        # Next important step is to re-align the two datasets so that y adjusts
+        # to the changed coordinates of x
+        x,y = xr.align(x,y)
+
+    if lagy!=0:
+        y   = y.shift(time = -lagy).dropna(dim='time')
+        x,y = xr.align(x,y)
+
+    #3. Compute data length, mean and standard deviation along time axis: X (1-D time) needs to be subset by non-NaN in Y
+    n = y.notnull().sum(dim='time')
+    n = xr.where(n<n_obs, np.nan, n) # pixels with less than n_obs set to NaN
+    
+    # retile 1-D array (assume X is time vector)
+    x = np.expand_dims(np.expand_dims(x,-1), -1)
+    x = np.tile(x, (1,y.shape[1], y.shape[2]))
+    x = xr.where(y.notnull(), x, np.nan)
+    
+    xmean = x.mean(axis=0)
+    ymean = y.mean(axis=0)
+    xstd  = x.std(axis=0)
+    ystd  = y.std(axis=0)
+
+    #4. Compute covariance along time axis
+    cov   =  np.sum((x - xmean)*(y - ymean), axis=0)/(n)
+
+    #5. Compute correlation along time axis
+    cor   = cov/(xstd*ystd)
+
+    #6. Compute regression slope and intercept:
+    slope     = cov/(xstd**2)
+    intercept = ymean - xmean*slope  
+
+    #7. Compute P-value and standard error
+    #Compute t-statistics
+    tstats = cor*np.sqrt(n-2)/np.sqrt(1-cor**2)
+    stderr = slope/tstats
+
+    from scipy.stats import t
+    pval   = t.sf(tstats, n-2)*2
+    pval   = xr.DataArray(pval, dims=cor.dims, coords=cor.coords)
+
+    return cov,cor,slope,intercept,pval,stderr,n
+
+def plot_regress_var(folder, af_var='FRP_total', reg_month='August', reg_var='slope', n_obsv=7, agg_fact=1, absmin=None, absmax=None, cm='jet', save=False, save_dir=None, cartoplot=False, norm=False, min_year=None):
+    
+    if (min_year is not None) and (min_year not in np.arange(2000,2019)):
+        raise ValueError("min_year must be valid")
+    
+    var = af_var
+    month= reg_month
+    raster_folder = folder
+    day_rasters = glob(raster_folder + '{}/*_D_*{}*.tif'.format(var, month))
+    night_rasters = glob(raster_folder + '{}/*_N_*{}*.tif'.format(var, month))
+    years = [int(os.path.basename(d).split('.')[0].split('_')[-1]) for d in day_rasters]
+
+    test_day = xr.DataArray(stack(day_rasters, nodata=0)[0], dims=['time', 'lat', 'lon'])
+    test_night = xr.DataArray(stack(night_rasters, nodata=0)[0], dims=['time', 'lat', 'lon'])
+    test_years = xr.DataArray(np.arange(2001,2001+test_night.shape[0]), dims=['time'])
+    
+    if norm:
+        # try to normalize the data
+        day_max = test_day.max()
+        day_min = test_day.min()
+        night_max = test_night.max()
+        night_min = test_night.min()
+        tot_min = min(night_min, day_min)
+        tot_max = max(night_max, day_max)
+        test_day = (test_day - tot_min) / (tot_max - tot_min)
+        test_night = (test_night - tot_min) / (tot_max - tot_min)
+        test_years -= 2000 # normalize
+        
+    if min_year is not None:
+        
+        # get index for min_year
+        if norm:
+            min_ind = min_year - 2000
+            test_years = test_years[min_ind:]
+            test_day = test_day[min_ind:,:,:]
+            test_night = test_night[min_ind:,:,:]
+        
+        else:
+            min_ind = np.where(test_years == min_year)[0][0]
+            test_years = test_years[min_ind:]
+            test_day = test_day[min_ind:,:,:]
+            test_night = test_night[min_ind:,:,:]
+    
+    d_cov, d_cor, d_slope, d_intercept, d_pval, d_stderr, d_n = lag_linregress_3D(test_years, test_day, n_obs=n_obsv)
+    n_cov, n_cor, n_slope, n_intercept, n_pval, n_stderr, n_n = lag_linregress_3D(test_years, test_night, n_obs=n_obsv)
+    
+    #print(test_years, np.nanmax(d_slope), np.nanmin(d_slope), np.nanmax(n_slope), np.nanmin(n_slope))
+    
+    if (absmin is None) or (absmax is None):
+        absmin = min(n_slope.min(), d_slope.min())
+        absmax = min(n_slope.max(), d_slope.max())
+    
+    
+    night_plot_im = np.ma.masked_equal(n_slope,0)
+    day_plot_im = np.ma.masked_equal(d_slope,0)
+
+
+    # aggregate?
+    agg_fac = agg_fact # agg_fac*0.25... 4 == 1 deg
+    if agg_fac > 1:
+        night_resized = resize(night_plot_im, (int(night_plot_im.shape[0] / agg_fac), int(night_plot_im.shape[1] / agg_fac)), anti_aliasing=True)
+    else:
+        night_resized = night_plot_im
+    night_resized = np.ma.masked_equal(night_resized,0)
+
+    if agg_fac > 1:
+        day_resized = resize(day_plot_im, (int(day_plot_im.shape[0] / agg_fac), int(day_plot_im.shape[1] / agg_fac)), anti_aliasing=True)
+    else:
+        day_resized = day_plot_im
+    day_resized = np.ma.masked_equal(day_resized,0)
+
+    if not cartoplot:
+        fig, ax = plt.subplots(2,1, figsize=(30,20))
+        ax[0].imshow(day_resized, cmap=cm, vmin=absmin, vmax=absmax)
+        ax[0].set_title('daytime slope for {} 2001-2019, at least {} data points'.format(month, n_obsv))
+        im=ax[1].imshow(night_resized, cmap=cm, vmin=absmin, vmax=absmax)
+        ax[1].set_title('nighttime slope for {} 2001-2019, at least {} data points'.format(month, n_obsv))
+
+        fig.subplots_adjust(right=0.96)
+        cbar_ax = fig.add_axes([0.85, 0.15, 0.05, 0.7])
+        fig.colorbar(im, cax=cbar_ax)
+
+        if save:
+            save_file = os.path.join(save_dir, '{}_{}_slope_aggfact{}.png'.format(var, month, agg_fact))
+            plt.savefig(save_file)
+
+        plt.show()
+        
+    else:
+        plot_carto_var(folder, day_resized, var, month, 'D', n_obsv, cm, absmin, absmax, agg_fact, save_dir=save_dir)
+        plot_carto_var(folder, night_resized, var, month, 'N', n_obsv, cm, absmin, absmax, agg_fact, save_dir=save_dir)
+        
+        # plot some others to make sure the slopes are note exactly equal
+        slope_title='{} daynight slope ratio (night / day)'.format(month)
+        plot_carto_check(folder, night_resized/day_resized, cm, vmin=-2., vmax=2., agg_fact=agg_fact, save=False, title=slope_title, slopenan=True)
+        
+        dif_title = '{} daynight slope difference (night - day)'.format(month)
+        plot_carto_check(folder, (night_resized - day_resized)*100, cm, vmin=-1., vmax=1., agg_fact=agg_fact, save=False, title=dif_title)
+        
+def plot_carto_var(raster_folder, data, var, month, daynight, n_obsv, cmap, vmin, vmax, agg_fact, save=True, save_dir=None, title=None):
+    
+    
+    # get coords
+    ## try for my data
+    template = glob(raster_folder + '{}/*_D_*{}*.tif'.format('AFC_num', 'April'))[0]
+    with rio.open(template) as src:
+        meta = src.meta
+
+    tform = meta['transform']
+    #num_x = meta['width']
+    #num_y = meta['height']
+    
+    num_x = data.shape[1]
+    num_y = data.shape[0]
+
+    # incorporate aggregation factor
+    tlon = np.linspace(tform.c - tform.a*agg_fact, tform.c+num_x*tform.a*agg_fact, num_x)
+    tlat = np.linspace(tform.f - tform.e*agg_fact, tform.f+num_y*tform.e*agg_fact, num_y)
+    lon2d, lat2d = np.meshgrid(tlon, tlat)
+
+    
+    # make data into xarray with location
+    xdata = xr.DataArray(data, coords=[tlat, tlon], dims=['lat', 'lon'])
+    xdata = xr.where(xdata == 0, np.nan, xdata)
+
+    fig = plt.figure(figsize=(20,10))
+    ax = plt.axes(projection=ccrs.EqualEarth())
+    ax.set_global()
+    ax.coastlines()
+    ax.gridlines()
+    xdata.plot(ax=ax, transform=ccrs.PlateCarree(), cmap=cmap, vmin=vmin, vmax=vmax)
+    
+    # get title
+    if daynight=='D':
+        title = '{} daytime slope for {} 2001-2019, at least {} data points'.format(var, month, n_obsv)
+    elif daynight=='N':
+        title = '{} nighttime slope for {} 2001-2019, at least {} data points'.format(var, month, n_obsv)
+        
+    plt.title(title)
+    
+    if save:
+        save_file = os.path.join(save_dir, '{}_{}_slope_aggfact{}_dn{}.png'.format(var, month, agg_fact, daynight))
+        plt.savefig(save_file)
+        
+    plt.show()
+    
+def plot_carto_check(raster_folder, data, cmap, vmin, vmax, agg_fact, save=True, save_dir=None, title=None, slopenan=False):
+    
+    # get coords
+    ## try for my data
+    template = glob(raster_folder + '{}/*_D_*{}*.tif'.format('AFC_num', 'April'))[0]
+    with rio.open(template) as src:
+        meta = src.meta
+
+    tform = meta['transform']
+    #num_x = meta['width']
+    #num_y = meta['height']
+    
+    num_x = data.shape[1]
+    num_y = data.shape[0]
+
+    # incorporate aggregation factor
+    tlon = np.linspace(tform.c - tform.a*agg_fact, tform.c+num_x*tform.a*agg_fact, num_x)
+    tlat = np.linspace(tform.f - tform.e*agg_fact, tform.f+num_y*tform.e*agg_fact, num_y)
+    lon2d, lat2d = np.meshgrid(tlon, tlat)
+
+    
+    
+    xdata = xr.DataArray(data, coords=[tlat, tlon], dims=['lat', 'lon'])
+    xdata = xr.where(xdata == 0, np.nan, xdata)
+    
+    if slopenan:
+        one_buffer = 0.01
+        print('setting ratio==1.0 (+/- {}) to nan'.format(one_buffer))
+        #xdata = xr.where(xdata==1.0, np.nan, xdata)
+        xdata = xr.where((xdata<=1.0+one_buffer) & (xdata>=1.0-one_buffer), np.nan, xdata)
+
+    fig = plt.figure(figsize=(20,10))
+    ax = plt.axes(projection=ccrs.EqualEarth())
+    ax.set_global()
+    ax.coastlines()
+    ax.gridlines()
+    xdata.plot(ax=ax, transform=ccrs.PlateCarree(), cmap=cmap, vmin=vmin, vmax=vmax)
+    
+    plt.title(title)
+    
+    if save:
+        save_file = os.path.join(save_dir, '{}_{}_slope_aggfact{}_dn{}.png'.format(var, month, agg_fact, daynight))
+        plt.savefig(save_file)
+        
+    plt.show()               

@@ -735,7 +735,7 @@ def lag_linregress_3D(x, y, lagx=0, lagy=0, n_obs=3):
 
     return cov,cor,slope,intercept,pval,stderr,n
 
-def plot_regress_var(folder, af_var='FRP_total', reg_month='August', reg_var='slope', n_obsv=7, agg_fact=1, absmin=None, absmax=None, cm='jet', save=False, save_dir=None, cartoplot=False, norm=False, min_year=None):
+def plot_regress_var(day_data, night_data, folder, af_var='FRP_total', reg_month='August', reg_var='slope', n_obsv=7, agg_fact=1, absmin=None, absmax=None, cm='jet', save=False, save_dir=None, cartoplot=False, norm=False, min_year=None,base_year=2003):
     
     if (min_year is not None) and (min_year not in np.arange(2000,2019)):
         raise ValueError("min_year must be valid")
@@ -744,12 +744,16 @@ def plot_regress_var(folder, af_var='FRP_total', reg_month='August', reg_var='sl
     month= reg_month
     raster_folder = folder
     day_rasters = glob(raster_folder + '{}/*_D_*{}*.tif'.format(var, month))
-    night_rasters = glob(raster_folder + '{}/*_N_*{}*.tif'.format(var, month))
-    years = [int(os.path.basename(d).split('.')[0].split('_')[-1]) for d in day_rasters]
+#     night_rasters = glob(raster_folder + '{}/*_N_*{}*.tif'.format(var, month))
+#     years = [int(os.path.basename(d).split('.')[0].split('_')[-1]) for d in day_rasters]
 
-    test_day = xr.DataArray(stack(day_rasters, nodata=0)[0], dims=['time', 'lat', 'lon'])
-    test_night = xr.DataArray(stack(night_rasters, nodata=0)[0], dims=['time', 'lat', 'lon'])
-    test_years = xr.DataArray(np.arange(2001,2001+test_night.shape[0]), dims=['time'])
+#     test_day = xr.DataArray(stack(day_rasters, nodata=0)[0], dims=['time', 'lat', 'lon'])
+#     test_night = xr.DataArray(stack(night_rasters, nodata=0)[0], dims=['time', 'lat', 'lon'])
+#     test_years = xr.DataArray(np.arange(2001,2001+test_night.shape[0]), dims=['time'])
+    
+    test_day = xr.DataArray(day_data, dims=['time', 'lat', 'lon'])
+    test_night = xr.DataArray(night_data, dims=['time', 'lat', 'lon'])
+    test_years = xr.DataArray(np.arange(base_year,base_year+test_night.shape[0]))
     
     if norm:
         # try to normalize the data
@@ -761,13 +765,13 @@ def plot_regress_var(folder, af_var='FRP_total', reg_month='August', reg_var='sl
         tot_max = max(night_max, day_max)
         test_day = (test_day - tot_min) / (tot_max - tot_min)
         test_night = (test_night - tot_min) / (tot_max - tot_min)
-        test_years -= 2000 # normalize
+        test_years -= base_year # normalize
         
     if min_year is not None:
         
         # get index for min_year
         if norm:
-            min_ind = min_year - 2000
+            min_ind = min_year - base_year
             test_years = test_years[min_ind:]
             test_day = test_day[min_ind:,:,:]
             test_night = test_night[min_ind:,:,:]
@@ -778,9 +782,12 @@ def plot_regress_var(folder, af_var='FRP_total', reg_month='August', reg_var='sl
             test_day = test_day[min_ind:,:,:]
             test_night = test_night[min_ind:,:,:]
     
+    print(f'test_years: {test_years.max()} {test_years.min()}')
     d_cov, d_cor, d_slope, d_intercept, d_pval, d_stderr, d_n = lag_linregress_3D(test_years, test_day, n_obs=n_obsv)
     n_cov, n_cor, n_slope, n_intercept, n_pval, n_stderr, n_n = lag_linregress_3D(test_years, test_night, n_obs=n_obsv)
     
+    print(f'day max: {d_slope.max().values}, night max: {n_slope.max().values}')
+    print(f'day min: {d_slope.min().values}, night min: {n_slope.min().values}')
     #print(test_years, np.nanmax(d_slope), np.nanmin(d_slope), np.nanmax(n_slope), np.nanmin(n_slope))
     
     if (absmin is None) or (absmax is None):
@@ -824,17 +831,20 @@ def plot_regress_var(folder, af_var='FRP_total', reg_month='August', reg_var='sl
         plt.show()
         
     else:
-        plot_carto_var(folder, day_resized, var, month, 'D', n_obsv, cm, absmin, absmax, agg_fact, save_dir=save_dir)
-        plot_carto_var(folder, night_resized, var, month, 'N', n_obsv, cm, absmin, absmax, agg_fact, save_dir=save_dir)
+        plot_carto_var(folder, day_resized, var, month, 'D', n_obsv, cm, absmin, absmax, agg_fact, save_dir=save_dir, base_year=base_year)
+        plot_carto_var(folder, night_resized, var, month, 'N', n_obsv, cm, absmin, absmax, agg_fact, save_dir=save_dir, base_year=base_year)
         
         # plot some others to make sure the slopes are note exactly equal
         slope_title='{} daynight slope ratio (night / day)'.format(month)
         plot_carto_check(folder, night_resized/day_resized, cm, vmin=-2., vmax=2., agg_fact=agg_fact, save=False, title=slope_title, slopenan=True)
         
-        dif_title = '{} daynight slope difference (night - day)'.format(month)
+        dif_title = '{} daynight slope difference (night - day) (x100)'.format(month)
         plot_carto_check(folder, (night_resized - day_resized)*100, cm, vmin=-1., vmax=1., agg_fact=agg_fact, save=False, title=dif_title)
         
-def plot_carto_var(raster_folder, data, var, month, daynight, n_obsv, cmap, vmin, vmax, agg_fact, save=True, save_dir=None, title=None):
+    
+    return day_resized, night_resized, night_resized/day_resized, (night_resized - day_resized)
+        
+def plot_carto_var(raster_folder, data, var, month, daynight, n_obsv, cmap, vmin, vmax, agg_fact, save=True, save_dir=None, title=None, base_year=None):
     
     
     # get coords
@@ -869,9 +879,9 @@ def plot_carto_var(raster_folder, data, var, month, daynight, n_obsv, cmap, vmin
     
     # get title
     if daynight=='D':
-        title = '{} daytime slope for {} 2001-2019, at least {} data points'.format(var, month, n_obsv)
+        title = '{} daytime slope for {} {}-2019, at least {} data points'.format(var, month, base_year, n_obsv)
     elif daynight=='N':
-        title = '{} nighttime slope for {} 2001-2019, at least {} data points'.format(var, month, n_obsv)
+        title = '{} nighttime slope for {} {}-2019, at least {} data points'.format(var, month, base_year, n_obsv)
         
     plt.title(title)
     
@@ -925,4 +935,280 @@ def plot_carto_check(raster_folder, data, cmap, vmin, vmax, agg_fact, save=True,
         save_file = os.path.join(save_dir, '{}_{}_slope_aggfact{}_dn{}.png'.format(var, month, agg_fact, daynight))
         plt.savefig(save_file)
         
-    plt.show()               
+    plt.show()
+    
+def remap_months3(month_arr):
+    
+    # 1=DJF, 2=MAM, 3=JJA, 4=SON
+    month_arr1 = month_arr.copy()
+    
+    month_arr1[month_arr==12] = 1
+    month_arr1[month_arr==1] = 1
+    month_arr1[month_arr==2] = 1
+    
+    month_arr1[month_arr==3] = 2
+    month_arr1[month_arr==4] = 2
+    month_arr1[month_arr==5] = 2
+    
+    month_arr1[month_arr==6] = 3
+    month_arr1[month_arr==7] = 3
+    month_arr1[month_arr==8] = 3
+    
+    month_arr1[month_arr==9] = 4
+    month_arr1[month_arr==10] = 4
+    month_arr1[month_arr==11] = 4
+    
+    return month_arr1
+
+def plot_max_month(argm_data, raster_folder, title=None):
+    
+    # make a color map of fixed colors
+    cmap = colors.ListedColormap(['#1a68d6', # January (dark blue)
+                                  '#5713bd', # February (purplish)
+                                  '#8ee3fa', # March (light blue)
+                                  '#e3df10', # April (yellow)
+                                  '#fa6969', # May (light red)
+                                   '#d8e3e1', # June (off white)
+                                   '#a30000', # July (dark red)
+                                   '#74c477', # August (light green)
+                                   '#8a4300', # September (dark brown)
+                                   '#fa7d07', # October (brighter orange)
+                                   '#006c75', # November (darker tealish)
+                                   '#00ebff']) # December (light blue)
+
+    tick_labels = ['Jan',
+                  'Feb',
+                  'Mar',
+                  'Apr',
+                  'May',
+                  'Jun',
+                  'Jul',
+                  'Aug',
+                  'Sep',
+                  'Oct',
+                  'Nov',
+                  'Dec']
+
+    bounds=[0.5,1.5,2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5]
+    norm = colors.BoundaryNorm(bounds, cmap.N)
+
+
+    data=argm_data
+    agg_fact=1
+    template = glob(raster_folder + '{}/*_D_*{}*.tif'.format('AFC_num', 'April'))[0]
+    with rio.open(template) as src:
+        meta = src.meta
+
+    tform = meta['transform']
+    #num_x = meta['width']
+    #num_y = meta['height']
+
+    num_x = data.shape[1]
+    num_y = data.shape[0]
+
+    # incorporate aggregation factor
+    tlon = np.linspace(tform.c - tform.a*agg_fact, tform.c+num_x*tform.a*agg_fact, num_x)
+    tlat = np.linspace(tform.f - tform.e*agg_fact, tform.f+num_y*tform.e*agg_fact, num_y)
+    lon2d, lat2d = np.meshgrid(tlon, tlat)
+
+
+    # make data into xarray with location
+    xdata = xr.DataArray(data, coords=[tlat, tlon], dims=['lat', 'lon'])
+    xdata = xr.where(xdata == 0, np.nan, xdata)
+
+    fig = plt.figure(figsize=(20,10))
+    ax = plt.axes(projection=ccrs.EqualEarth())
+    ax.set_global()
+    ax.coastlines()
+    ax.gridlines()
+    img = xdata.plot(ax=ax, transform=ccrs.PlateCarree(), cmap=cmap, norm=norm, add_colorbar=False)
+    cbar = plt.colorbar(img, cmap=cmap, norm=norm, boundaries=bounds, ticks=np.array(bounds)-0.5)
+    cbar.ax.set_yticklabels(tick_labels)
+    plt.title(title)
+    plt.show()
+    
+    # Used to return the plot as an image array
+    fig.canvas.draw()       # draw the canvas, cache the renderer
+    image = np.frombuffer(fig.canvas.tostring_rgb(), dtype='uint8')
+    image  = image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+
+    return image
+
+def plot_max_month_groups(argm_data, raster_folder, title=None):
+    
+    # make a color map of fixed colors
+    cmap = colors.ListedColormap(['#1a68d6', # DJF (dark blue)
+                                  '#fae311', # MAM (light orange)
+                                  '#07db7f', # JJA (green)
+                                  '#d95904']) # SON (red-orange)
+
+    tick_labels = ['Winter (DJF)',
+                  'Spring (MAM)',
+                  'Summer (JJA)',
+                  'Autumn (SON)']
+
+    bounds=[0.5,1.5,2.5, 3.5, 4.5]
+    norm = colors.BoundaryNorm(bounds, cmap.N)
+
+
+    data=argm_data
+    agg_fact=1
+    template = glob(raster_folder + '{}/*_D_*{}*.tif'.format('AFC_num', 'April'))[0]
+    with rio.open(template) as src:
+        meta = src.meta
+
+    tform = meta['transform']
+    #num_x = meta['width']
+    #num_y = meta['height']
+
+    num_x = data.shape[1]
+    num_y = data.shape[0]
+
+    # incorporate aggregation factor
+    tlon = np.linspace(tform.c - tform.a*agg_fact, tform.c+num_x*tform.a*agg_fact, num_x)
+    tlat = np.linspace(tform.f - tform.e*agg_fact, tform.f+num_y*tform.e*agg_fact, num_y)
+    lon2d, lat2d = np.meshgrid(tlon, tlat)
+
+
+    # make data into xarray with location
+    xdata = xr.DataArray(data, coords=[tlat, tlon], dims=['lat', 'lon'])
+    xdata = xr.where(xdata == 0, np.nan, xdata)
+
+    fig = plt.figure(figsize=(20,10))
+    ax = plt.axes(projection=ccrs.EqualEarth())
+    ax.set_global()
+    ax.coastlines()
+    ax.gridlines()
+    img = xdata.plot(ax=ax, transform=ccrs.PlateCarree(), cmap=cmap, norm=norm, add_colorbar=False)
+    cbar = plt.colorbar(img, cmap=cmap, norm=norm, boundaries=bounds, ticks=np.array(bounds)-0.5)
+    cbar.ax.set_yticklabels(tick_labels)
+    plt.title(title)
+    plt.show()
+    
+    # Used to return the plot as an image array
+    fig.canvas.draw()       # draw the canvas, cache the renderer
+    image = np.frombuffer(fig.canvas.tostring_rgb(), dtype='uint8')
+    image  = image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+
+    return image
+
+def gen_plot_xarr(argm_data, raster_folder, title=None, cmap='jet'):
+    
+    data=argm_data
+    agg_fact=1
+    template = glob(raster_folder + '{}/*_D_*{}*.tif'.format('AFC_num', 'April'))[0]
+    with rio.open(template) as src:
+        meta = src.meta
+
+    tform = meta['transform']
+    #num_x = meta['width']
+    #num_y = meta['height']
+
+    num_x = data.shape[1]
+    num_y = data.shape[0]
+
+    # incorporate aggregation factor
+    tlon = np.linspace(tform.c - tform.a*agg_fact, tform.c+num_x*tform.a*agg_fact, num_x)
+    tlat = np.linspace(tform.f - tform.e*agg_fact, tform.f+num_y*tform.e*agg_fact, num_y)
+    lon2d, lat2d = np.meshgrid(tlon, tlat)
+
+
+    # make data into xarray with location
+    xdata = xr.DataArray(data, coords=[tlat, tlon], dims=['lat', 'lon'])
+    xdata = xr.where(xdata == 0, np.nan, xdata)
+
+    fig = plt.figure(figsize=(20,10))
+    ax = plt.axes(projection=ccrs.EqualEarth())
+    ax.set_global()
+    ax.coastlines()
+    ax.gridlines()
+    img = xdata.plot(ax=ax, transform=ccrs.PlateCarree(), cmap=cmap, add_colorbar=True)
+    plt.title(title)
+    plt.show()
+    
+    # Used to return the plot as an image array
+    fig.canvas.draw()       # draw the canvas, cache the renderer
+    image = np.frombuffer(fig.canvas.tostring_rgb(), dtype='uint8')
+    image  = image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+
+    return image
+    
+    
+def get_fire_year_files(raster_folder, var, year):
+    
+    yr_mos = ['March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+    yr_mos_p1 = ['January', 'February']
+
+    # extract rasters for a single fire year, defined as March to February of following year.
+    day_files = glob(raster_folder + f'{var}/*_D_*_{year}*')
+    day_files = [f for f in day_files if os.path.basename(f).split('_')[4] in yr_mos]
+    day_files2 = glob(raster_folder + f'{var}/*_D_*_{year+1}*')
+    day_files2 = [f for f in day_files2 if os.path.basename(f).split('_')[4] in yr_mos_p1]
+    day_files_yr = day_files + day_files2
+
+    # night_files
+    night_files = glob(raster_folder + f'{var}/*_N_*_{year}*')
+    night_files = [f for f in night_files if os.path.basename(f).split('_')[4] in yr_mos]
+    night_files2 = glob(raster_folder + f'{var}/*_N_*_{year+1}*')
+    night_files2 = [f for f in night_files2 if os.path.basename(f).split('_')[4] in yr_mos_p1]
+    night_files_yr = night_files + night_files2
+    
+    month_vals = dict((v,k) for k,v in enumerate(calendar.month_name))
+    month_names = [os.path.basename(f).split('_')[4] for f in day_files_yr]
+
+    # get the way things are sorted
+    cur_sort = [month_vals[m] for m in month_names] 
+    cur_sort_inds = np.array(cur_sort)
+
+    # should be sorted as 
+    fy_sort = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2]
+    fy_sort_inds = np.array(fy_sort)
+
+    if len(fy_sort) > len(cur_sort):
+        # this would happen if the current year data is provisional and doesn't have the fields!
+        fy_sort = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        fy_sort_inds = np.array(fy_sort)
+    
+    temp_df = pd.DataFrame({'files': day_files_yr, 'cur_ind':cur_sort_inds, 'fy_ind': fy_sort_inds, 'dummy': 'blah'})
+
+    # sort correctly for FY
+    df1 = temp_df.set_index('cur_ind')
+    df1 = df1.reindex(index=fy_sort_inds)
+    df1.reset_index();
+
+    temp_df = pd.DataFrame({'files': night_files_yr, 'cur_ind':cur_sort_inds, 'fy_ind': fy_sort_inds, 'dummy': 'blah'})
+
+    # sort correctly for FY
+    df2 = temp_df.set_index('cur_ind')
+    df2 = df2.reindex(index=fy_sort_inds)
+    df2.reset_index();
+    
+    return df1.files, df2.files
+
+def nanargmax(files, nodataval=-32768):
+
+    # stack one
+    test_arr,_ = es_stack(files, nodata=nodataval)
+
+    # mask the nodata
+    ma = np.ma.masked_equal(test_arr, nodataval)
+    #ma = np.ma.filled(ma, np.nan)
+    all_na_mask = np.any(ma, axis=0)
+
+    # get the argmax
+    argm = np.argmax(test_arr, axis=0) + 1
+    argm = np.ma.masked_less(argm, -np.inf)
+    argm.mask = ~all_na_mask
+    
+    return argm
+
+def nansum(files, nodataval=-32768):
+
+    # stack one
+    test_arr,_ = es_stack(files, nodata=nodataval)
+
+    nsum = np.nansum(test_arr, axis=0)
+    
+    
+    return nsum
+    

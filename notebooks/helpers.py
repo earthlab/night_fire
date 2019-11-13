@@ -8,7 +8,8 @@ from fiona.crs import from_epsg
 import rasterio as rio
 from rasterio import features
 import pickle
-
+import calendar
+import pandas as pd
 from matplotlib import pyplot as plt
 from glob import glob
 
@@ -1188,7 +1189,7 @@ def get_fire_year_files(raster_folder, var, year):
 def nanargmax(files, nodataval=-32768):
 
     # stack one
-    test_arr,_ = es_stack(files, nodata=nodataval)
+    test_arr,_ = stack(files, nodata=nodataval)
 
     # mask the nodata
     ma = np.ma.masked_equal(test_arr, nodataval)
@@ -1205,7 +1206,7 @@ def nanargmax(files, nodataval=-32768):
 def nansum(files, nodataval=-32768):
 
     # stack one
-    test_arr,_ = es_stack(files, nodata=nodataval)
+    test_arr,_ = stack(files, nodata=nodataval)
 
     nsum = np.nansum(test_arr, axis=0)
     

@@ -11,6 +11,7 @@ import pickle
 import calendar
 import pandas as pd
 from matplotlib import pyplot as plt
+from matplotlib import colors
 from glob import glob
 
 from earthpy.spatial import stack

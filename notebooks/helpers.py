@@ -1094,10 +1094,10 @@ def plot_max_month_groups(argm_data, raster_folder, title=None):
 
     return image
 
-def gen_plot_xarr(argm_data, raster_folder, title=None, cmap='jet'):
+def gen_plot_xarr(argm_data, raster_folder, title=None, cmap='jet', agg=1):
     
     data=argm_data
-    agg_fact=1
+    agg_fact=agg
     template = glob(raster_folder + '{}/*_D_*{}*.tif'.format('AFC_num', 'April'))[0]
     with rio.open(template) as src:
         meta = src.meta

@@ -273,7 +273,7 @@ def spatial_agg_point_df(gdf, agg_val=0.5, calc='mean', epsg=4326):
     return group_calc
 
 
-def create_global_agg_var_grid(shp_files, meta_file, agg=0.25, conf=1, type_code=0, out_folder='./'):
+def create_global_agg_var_grid(shp_files, meta_file, agg=0.25, conf=1, type_code=0, out_folder='./', csv_file=False):
     ''' Here are the gridded fire data I think we want, with a question about total FRP that we can chat more about….
         # of nighttime active fire counts by month
         # of daytime active fire counts by month
@@ -339,14 +339,33 @@ def create_global_agg_var_grid(shp_files, meta_file, agg=0.25, conf=1, type_code
     # could probably farm out the shapefile
     for shp in shp_files:
 
-        # read the file
-        df = gpd.read_file(shp)
+        if not csv_file:
+            # read the file
+            df = gpd.read_file(shp)
 
-        # get month and year info
-        df['month'] = [int(acq.split('-')[1]) for acq in df.ACQ_DATE]
-        year = int(df.ACQ_DATE[0].split('-')[0])
+            # get month and year info
+            df['month'] = [int(acq.split('-')[1]) for acq in df.ACQ_DATE]
+            year = int(df.ACQ_DATE[0].split('-')[0])
 
-        print('on year {}'.format(year))
+            print('on year {}'.format(year)) 
+            
+        else:
+            
+            # read csv and make into geopandas dataframe
+            df = pd.read_csv(shp)
+            df['month'] = df['acq_month']
+            year = df['acq_year'][0]
+            
+            # reclassify via solar elevation angle
+            df.loc[df['solar_elev_ang'] < 0, 'DAYNIGHT'] = 'N'
+            df.loc[df['solar_elev_ang'] > 0, 'DAYNIGHT'] = 'D'
+            
+            # convert to geodataframe
+            df['geometry']= list(map(Point, df[['LONGITUDE', 'LATITUDE']].values))
+            df = gpd.GeoDataFrame(df, crs=from_epsg(4326))
+            
+            
+            
 
         # iterate through the months
         for m in df['month'].unique():

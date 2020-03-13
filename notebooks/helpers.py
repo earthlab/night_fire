@@ -243,8 +243,8 @@ def spatial_agg_point_df(gdf, agg_val=0.5, calc='mean', epsg=4326):
         epsg_code=epsg
     
     # Create the rounded coordinates
-    gdf['lat_round'] = round_to_val(gdf['LATITUDE'].values, agg_val)
-    gdf['lon_round'] = round_to_val(gdf['LONGITUDE'].values, agg_val)
+    gdf['lat_round'] = round_to_val(gdf['LATITUDE'].values, agg_val) +0.005 # get off the corner coord
+    gdf['lon_round'] = round_to_val(gdf['LONGITUDE'].values, agg_val) +0.005 # get off the corner coord
 
     # Making dataframes and grouping stuff
     group_xy = gdf.groupby(['lon_round', 'lat_round'])
@@ -397,6 +397,17 @@ def create_global_agg_var_grid(shp_files, meta_file, agg=0.25, conf=1, type_code
             df_night_agg_count = spatial_agg_point_df(df_night, agg_val=agg, calc='count', epsg=4326)
             df_day_agg_count = spatial_agg_point_df(df_day, agg_val=agg, calc='count', epsg=4326)
             
+#             test_a = df_night_agg_count['FRP'].sum()
+#             test_b = df_night.shape[0]
+#             if test_a != test_b:
+#                 print(f'aggregated counts: {test_a}')
+#                 print(f'original counts: {test_b}')
+#                 print('something off...')
+                
+#             # DEBUG write one out. 
+#             df_night_agg_count.to_file(f'D:/projects/RD/night_fire/vars/debug/shp_{m}_afc_n_{year}.shp')
+#             sys.exit()
+            
             # do the aggregation by mean
             df_night_agg_mean = spatial_agg_point_df(df_night, agg_val=agg, calc='mean', epsg=4326)
             df_day_agg_mean = spatial_agg_point_df(df_day, agg_val=agg, calc='mean', epsg=4326)
@@ -444,16 +455,18 @@ def create_global_agg_var_grid(shp_files, meta_file, agg=0.25, conf=1, type_code
                     
                     day_arr = df_day_agg_count.dropna()
                     night_arr = df_night_agg_count.dropna()
+                    day_arr = df_day_agg_count.fillna(0)
+                    night_arr = df_night_agg_count.fillna(0)
                     for fname,df_2_write in zip((day_fname, night_fname), (day_arr, night_arr)):
 
                         out_fn = os.path.join(out_folder_var, fname)
-                        with rio.open(out_fn, 'w', **meta) as out:
+                        with rio.open(out_fn, 'w', **meta) as dst:
 
                             # this is where we create a generator of geom, value pairs to use in rasterizing
                             shapes = ((geom,value) for geom, value in zip(df_2_write.geometry, df_2_write.count_perc))
 
-                            burned = features.rasterize(shapes=shapes, fill=0, out=out_arr, transform=out.transform)
-                            out.write_band(1, burned)
+                            burned = features.rasterize(shapes=shapes, out_shape=out_arr.shape, fill=0, transform=dst.transform, all_touched=True)
+                            dst.write_band(1, burned)
                             
                 # num AFC rasters
                 if ('AFC_num' in day_fname):
@@ -463,16 +476,18 @@ def create_global_agg_var_grid(shp_files, meta_file, agg=0.25, conf=1, type_code
                         
                     day_arr = df_day_agg_count.dropna()
                     night_arr = df_night_agg_count.dropna()
+                    day_arr = df_day_agg_count.fillna(0)
+                    night_arr = df_night_agg_count.fillna(0)
                     for fname,df_2_write in zip((day_fname, night_fname), (day_arr, night_arr)):
 
                         out_fn = os.path.join(out_folder_var, fname)
-                        with rio.open(out_fn, 'w', **meta) as out:
+                        with rio.open(out_fn, 'w', **meta) as dst:
 
                             # this is where we create a generator of geom, value pairs to use in rasterizing
                             shapes = ((geom,value) for geom, value in zip(df_2_write.geometry, df_2_write.FRP))
 
-                            burned = features.rasterize(shapes=shapes, fill=0, out=out_arr, transform=out.transform)
-                            out.write_band(1, burned)
+                            burned = features.rasterize(shapes=shapes, out_shape=out_arr.shape, fill=0, transform=dst.transform, all_touched=True)
+                            dst.write_band(1, burned.astype('float32'))
                             
                 # mean FRP rasters
                 if ('FRP_mean' in day_fname):
@@ -482,16 +497,18 @@ def create_global_agg_var_grid(shp_files, meta_file, agg=0.25, conf=1, type_code
                         
                     day_arr = df_day_agg_mean.dropna()
                     night_arr = df_night_agg_mean.dropna()
+                    day_arr = df_day_agg_mean.fillna(0)
+                    night_arr = df_night_agg_mean.fillna(0)
                     for fname,df_2_write in zip((day_fname, night_fname), (day_arr, night_arr)):
 
                         out_fn = os.path.join(out_folder_var, fname)
-                        with rio.open(out_fn, 'w', **meta) as out:
+                        with rio.open(out_fn, 'w', **meta) as dst:
 
                             # this is where we create a generator of geom, value pairs to use in rasterizing
                             shapes = ((geom,value) for geom, value in zip(df_2_write.geometry, df_2_write.FRP))
 
-                            burned = features.rasterize(shapes=shapes, fill=0, out=out_arr, transform=out.transform)
-                            out.write_band(1, burned)
+                            burned = features.rasterize(shapes=shapes, out_shape=out_arr.shape, fill=0, transform=dst.transform, all_touched=True)
+                            dst.write_band(1, burned)
                             
                 # max FRP rasters
                 if ('FRP_max' in day_fname):
@@ -501,16 +518,18 @@ def create_global_agg_var_grid(shp_files, meta_file, agg=0.25, conf=1, type_code
                         
                     day_arr = df_day_agg_max.dropna()
                     night_arr = df_night_agg_max.dropna()
+                    day_arr = df_day_agg_max.fillna(0)
+                    night_arr = df_night_agg_max.fillna(0)
                     for fname,df_2_write in zip((day_fname, night_fname), (day_arr, night_arr)):
 
                         out_fn = os.path.join(out_folder_var, fname)
-                        with rio.open(out_fn, 'w', **meta) as out:
+                        with rio.open(out_fn, 'w', **meta) as dst:
 
                             # this is where we create a generator of geom, value pairs to use in rasterizing
                             shapes = ((geom,value) for geom, value in zip(df_2_write.geometry, df_2_write.FRP))
 
-                            burned = features.rasterize(shapes=shapes, fill=0, out=out_arr, transform=out.transform)
-                            out.write_band(1, burned)
+                            burned = features.rasterize(shapes=shapes, out_shape=out_arr.shape, fill=0, transform=dst.transform, all_touched=True)
+                            dst.write_band(1, burned)
                             
                 # total FRP rasters
                 if ('FRP_total' in day_fname):
@@ -520,16 +539,18 @@ def create_global_agg_var_grid(shp_files, meta_file, agg=0.25, conf=1, type_code
                         
                     day_arr = df_day_agg_sum.dropna()
                     night_arr = df_night_agg_sum.dropna()
+                    day_arr = df_day_agg_sum.fillna(0)
+                    night_arr = df_night_agg_sum.fillna(0)
                     for fname,df_2_write in zip((day_fname, night_fname), (day_arr, night_arr)):
 
                         out_fn = os.path.join(out_folder_var, fname)
-                        with rio.open(out_fn, 'w', **meta) as out:
+                        with rio.open(out_fn, 'w', **meta) as dst:
 
                             # this is where we create a generator of geom, value pairs to use in rasterizing
                             shapes = ((geom,value) for geom, value in zip(df_2_write.geometry, df_2_write.FRP))
 
-                            burned = features.rasterize(shapes=shapes, fill=0, out=out_arr, transform=out.transform)
-                            out.write_band(1, burned)
+                            burned = features.rasterize(shapes=shapes, out_shape=out_arr.shape, fill=0, transform=dst.transform, all_touched=True)
+                            dst.write_band(1, burned)
                             
                             
 def create_global_agg_CONF_grid(shp_files, meta_file, agg=0.25, conf=1, type_code=0, out_folder='./'):

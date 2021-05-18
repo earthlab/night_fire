@@ -272,6 +272,49 @@ def spatial_agg_point_df(gdf, agg_val=0.5, calc='mean', epsg=4326):
     
     return group_calc
 
+def spatial_agg_point_df_v2(gdf, agg_val=0.5, calc='mean', epsg=4326):
+    ''' takes a geodata frame and aggregates to agg_val by calculation specified in calc'''
+    
+    # Make rounding function:
+    def round_to_val(a, round_val):
+        return np.round( np.array(a, dtype=float) / round_val) * round_val
+    
+    
+    # Record the CRS epsg code of the incoming gdf
+    if epsg is None:
+        epsg_code = int(gdf.crs['init'].split(':')[1])
+    else:
+        epsg_code=epsg
+    
+    # Create the rounded coordinates
+    gdf['lat_round'] = round_to_val(gdf['latitude'].values, agg_val) +0.005 # get off the corner coord
+    gdf['lon_round'] = round_to_val(gdf['longitude'].values, agg_val) +0.005 # get off the corner coord
+
+    # Making dataframes and grouping stuff
+    group_xy = gdf.groupby(['lon_round', 'lat_round'])
+
+    # Calculating the value specified by calc
+    if calc == 'mean':
+        group_calc = group_xy.mean()
+    elif calc == 'count':
+        group_calc = group_xy.count()
+    elif calc == 'std':
+        group_calc = group_xy.std()
+    elif calc == 'sum':
+        group_calc = group_xy.sum()
+    elif calc == 'max':
+        group_calc = group_xy.max()
+    else:
+        raise ValueError('calc {} is not supported. Please use one of [mean, count, std, sum, max]. or... add it in!'.format(calc))
+        
+    # Introduce the geometry from the rounding
+    group_calc['geometry'] = list(map(Point, list(group_calc.index)))
+    
+    # convert to geodataframe and assign crs
+    group_calc = gpd.GeoDataFrame(group_calc)
+    group_calc.crs = from_epsg(epsg_code)
+    
+    return group_calc
 
 def create_global_agg_var_grid(shp_files, meta_file, agg=0.25, conf=1, type_code=0, out_folder='./', csv_file=False):
     ''' Here are the gridded fire data I think we want, with a question about total FRP that we can chat more about….
@@ -548,6 +591,285 @@ def create_global_agg_var_grid(shp_files, meta_file, agg=0.25, conf=1, type_code
 
                             # this is where we create a generator of geom, value pairs to use in rasterizing
                             shapes = ((geom,value) for geom, value in zip(df_2_write.geometry, df_2_write.FRP))
+
+                            burned = features.rasterize(shapes=shapes, out_shape=out_arr.shape, fill=0, transform=dst.transform, all_touched=True)
+                            dst.write_band(1, burned)
+                            
+def create_global_agg_var_grid_v2(shp_files, meta_file, agg=0.25, conf=1, type_code=0, out_folder='./', csv_file=False):
+    ''' Here are the gridded fire data I think we want, with a question about total FRP that we can chat more about….
+        # of nighttime active fire counts by month
+        # of daytime active fire counts by month
+        from a) and b) calculate the % of nighttime active fires/total active fires by month (I think you already have this one)
+        mean nighttime FRP by month
+        mean daytime FRP by month
+        max nighttime FRP by month
+        max daytime FRP by month
+        total? nighttime FRP by month
+        total? daytime FRP by month
+'''
+    var_list = ['AFC_num',
+                'AFC_perc',
+                'FRP_mean',
+                'FRP_max',
+                'FRP_total']
+    
+    if not os.path.exists(out_folder):
+        os.makedirs(out_folder)
+        
+    # load metadata
+    with open(meta_file, 'rb') as fp:
+        meta = pickle.load(fp)
+        
+    # update metadata dictionary as needed
+    if agg != 0.25:
+        from affine import Affine
+
+        # restructure affine
+        orig_size = meta['transform'].a
+        agg_size = agg
+        factor = agg_size/orig_size
+
+        # calculate the new rows/cols
+        new_height = int(np.floor_divide(meta['height'], factor))
+        new_width = int(np.floor_divide(meta['width'], factor))
+
+        # calculate the new center point for the upper left
+        new_ul_x = meta['transform'].c - orig_size + agg_size/2
+        new_ul_y =  meta['transform'].f + orig_size - agg_size/2
+
+        # generate the new transform
+        new_transform = Affine(agg_size, 0.0, new_ul_x, 
+                               0.0, -agg_size, new_ul_y)
+
+        # dictionary to update the metadata
+        update_dict = {'height': new_height,
+                       'width': new_width,
+                      'transform': new_transform}
+
+        meta.update(update_dict)
+        
+        print(agg, meta)
+    
+    else:
+        print(agg, meta)
+    
+        
+    # create some data for months info
+    months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+    month_no = list(range(1,13))
+    
+    # could probably farm out the shapefile
+    for shp in shp_files:
+
+        if not csv_file:
+            # read the file
+            df = gpd.read_file(shp)
+
+            # get month and year info
+            df['month'] = [int(acq.split('-')[1]) for acq in df.acq_dttme]
+            year = int(df.ACQ_DATE[0].split('-')[0])
+
+            print('on year {}'.format(year)) 
+            
+        else:
+            
+            # read csv and make into geopandas dataframe
+            df = pd.read_csv(shp)
+            df['month'] = [int(acq.split('-')[1]) for acq in df.acq_dttme]
+            year = int(df.acq_dttme[0].split('-')[0])
+            
+            # reclassify via solar elevation angle
+            df.loc[df['solar_ang'] < 0, 'daynight'] = 'N'
+            df.loc[df['solar_ang'] > 0, 'daynight'] = 'D'
+            
+            # convert to geodataframe
+            df['geometry']= list(map(Point, df[['longitude', 'latitude']].values))
+            df = gpd.GeoDataFrame(df, crs=from_epsg(4326))
+            
+            
+            
+
+        # iterate through the months
+        for m in df['month'].unique():
+
+            # get the month name for filenaming
+            month_name = months[m-1]
+
+            ### edit 9.17.2019 -- try-except due to type not existing in provisional data. continue...
+            # subset the dataframe by month and group by daynight
+            try:
+            
+                df_sub = df.query('month == {}'.format(m))
+                df_sub = df_sub.query('confidence > {}'.format(conf))
+                df_sub = df_sub.query('type == {}'.format(type_code))
+                daynight = list(df_sub.groupby('daynight'))
+                df_day = daynight[0][1]
+                df_night = daynight[1][1]
+            
+            except Exception as e:
+                
+                print(e)
+                continue
+
+            ##################
+            ## AGGREGATIONS ##
+            ##################
+            
+            # do the aggregation by count
+            df_night_agg_count = spatial_agg_point_df_v2(df_night, agg_val=agg, calc='count', epsg=4326)
+            df_day_agg_count = spatial_agg_point_df_v2(df_day, agg_val=agg, calc='count', epsg=4326)
+            
+#             test_a = df_night_agg_count['FRP'].sum()
+#             test_b = df_night.shape[0]
+#             if test_a != test_b:
+#                 print(f'aggregated counts: {test_a}')
+#                 print(f'original counts: {test_b}')
+#                 print('something off...')
+                
+#             # DEBUG write one out. 
+#             df_night_agg_count.to_file(f'D:/projects/RD/night_fire/vars/debug/shp_{m}_afc_n_{year}.shp')
+#             sys.exit()
+            
+            # do the aggregation by mean
+            df_night_agg_mean = spatial_agg_point_df_v2(df_night, agg_val=agg, calc='mean', epsg=4326)
+            df_day_agg_mean = spatial_agg_point_df_v2(df_day, agg_val=agg, calc='mean', epsg=4326)
+            
+            # do the aggregation by max
+            df_night_agg_max = spatial_agg_point_df_v2(df_night, agg_val=agg, calc='max', epsg=4326)
+            df_day_agg_max = spatial_agg_point_df_v2(df_day, agg_val=agg, calc='max', epsg=4326)
+            
+            # do the aggregation by sum
+            df_night_agg_sum = spatial_agg_point_df_v2(df_night, agg_val=agg, calc='sum', epsg=4326)
+            df_day_agg_sum = spatial_agg_point_df_v2(df_day, agg_val=agg, calc='sum', epsg=4326)
+
+            
+            # calculate the percentages per cell
+            df_night_agg_count['count_perc'] = df_night_agg_count['frp'] / (df_night_agg_count['frp'] + df_day_agg_count['frp'])
+            df_night_agg_count['count_perc'] *= 100
+
+            df_day_agg_count['count_perc'] = df_day_agg_count['frp'] / (df_night_agg_count['frp'] + df_day_agg_count['frp'])
+            df_day_agg_count['count_perc'] *= 100
+
+            ###########################
+            ## write out the rasters ##
+            ###########################
+            
+            for var in var_list:
+                
+                print('writing out {} {} rasters'.format(month_name, var))
+                
+                # specify raster file names
+                day_fname = 'modis_{}_{}_{}_{}.tif'.format('D', var, month_name, year)
+                night_fname = 'modis_{}_{}_{}_{}.tif'.format('N', var, month_name, year)
+
+                # dummy array for holding data (use meta['nodata'])
+                out_arr = np.ones((meta['height'], meta['width'])).astype('float32') * float(meta['nodata'])
+                
+                #####################################
+                ## assemble data frame for writing ##
+                #####################################
+                
+                # percent AFC rasters
+                if ('AFC_perc' in day_fname):
+                    out_folder_var = os.path.join(out_folder, var)
+                    if not os.path.exists(out_folder_var):
+                        os.makedirs(out_folder_var)
+                    
+                    day_arr = df_day_agg_count.dropna()
+                    night_arr = df_night_agg_count.dropna()
+                    day_arr = df_day_agg_count.fillna(0)
+                    night_arr = df_night_agg_count.fillna(0)
+                    for fname,df_2_write in zip((day_fname, night_fname), (day_arr, night_arr)):
+
+                        out_fn = os.path.join(out_folder_var, fname)
+                        with rio.open(out_fn, 'w', **meta) as dst:
+
+                            # this is where we create a generator of geom, value pairs to use in rasterizing
+                            shapes = ((geom,value) for geom, value in zip(df_2_write.geometry, df_2_write.count_perc))
+
+                            burned = features.rasterize(shapes=shapes, out_shape=out_arr.shape, fill=0, transform=dst.transform, all_touched=True)
+                            dst.write_band(1, burned)
+                            
+                # num AFC rasters
+                if ('AFC_num' in day_fname):
+                    out_folder_var = os.path.join(out_folder, var)
+                    if not os.path.exists(out_folder_var):
+                        os.makedirs(out_folder_var)
+                        
+                    day_arr = df_day_agg_count.dropna()
+                    night_arr = df_night_agg_count.dropna()
+                    day_arr = df_day_agg_count.fillna(0)
+                    night_arr = df_night_agg_count.fillna(0)
+                    for fname,df_2_write in zip((day_fname, night_fname), (day_arr, night_arr)):
+
+                        out_fn = os.path.join(out_folder_var, fname)
+                        with rio.open(out_fn, 'w', **meta) as dst:
+
+                            # this is where we create a generator of geom, value pairs to use in rasterizing
+                            shapes = ((geom,value) for geom, value in zip(df_2_write.geometry, df_2_write.frp))
+
+                            burned = features.rasterize(shapes=shapes, out_shape=out_arr.shape, fill=0, transform=dst.transform, all_touched=True)
+                            dst.write_band(1, burned.astype('float32'))
+                            
+                # mean FRP rasters
+                if ('FRP_mean' in day_fname):
+                    out_folder_var = os.path.join(out_folder, var)
+                    if not os.path.exists(out_folder_var):
+                        os.makedirs(out_folder_var)
+                        
+                    day_arr = df_day_agg_mean.dropna()
+                    night_arr = df_night_agg_mean.dropna()
+                    day_arr = df_day_agg_mean.fillna(0)
+                    night_arr = df_night_agg_mean.fillna(0)
+                    for fname,df_2_write in zip((day_fname, night_fname), (day_arr, night_arr)):
+
+                        out_fn = os.path.join(out_folder_var, fname)
+                        with rio.open(out_fn, 'w', **meta) as dst:
+
+                            # this is where we create a generator of geom, value pairs to use in rasterizing
+                            shapes = ((geom,value) for geom, value in zip(df_2_write.geometry, df_2_write.frp))
+
+                            burned = features.rasterize(shapes=shapes, out_shape=out_arr.shape, fill=0, transform=dst.transform, all_touched=True)
+                            dst.write_band(1, burned)
+                            
+                # max FRP rasters
+                if ('FRP_max' in day_fname):
+                    out_folder_var = os.path.join(out_folder, var)
+                    if not os.path.exists(out_folder_var):
+                        os.makedirs(out_folder_var)
+                        
+                    day_arr = df_day_agg_max.dropna()
+                    night_arr = df_night_agg_max.dropna()
+                    day_arr = df_day_agg_max.fillna(0)
+                    night_arr = df_night_agg_max.fillna(0)
+                    for fname,df_2_write in zip((day_fname, night_fname), (day_arr, night_arr)):
+
+                        out_fn = os.path.join(out_folder_var, fname)
+                        with rio.open(out_fn, 'w', **meta) as dst:
+
+                            # this is where we create a generator of geom, value pairs to use in rasterizing
+                            shapes = ((geom,value) for geom, value in zip(df_2_write.geometry, df_2_write.frp))
+
+                            burned = features.rasterize(shapes=shapes, out_shape=out_arr.shape, fill=0, transform=dst.transform, all_touched=True)
+                            dst.write_band(1, burned)
+                            
+                # total FRP rasters
+                if ('FRP_total' in day_fname):
+                    out_folder_var = os.path.join(out_folder, var)
+                    if not os.path.exists(out_folder_var):
+                        os.makedirs(out_folder_var)
+                        
+                    day_arr = df_day_agg_sum.dropna()
+                    night_arr = df_night_agg_sum.dropna()
+                    day_arr = df_day_agg_sum.fillna(0)
+                    night_arr = df_night_agg_sum.fillna(0)
+                    for fname,df_2_write in zip((day_fname, night_fname), (day_arr, night_arr)):
+
+                        out_fn = os.path.join(out_folder_var, fname)
+                        with rio.open(out_fn, 'w', **meta) as dst:
+
+                            # this is where we create a generator of geom, value pairs to use in rasterizing
+                            shapes = ((geom,value) for geom, value in zip(df_2_write.geometry, df_2_write.frp))
 
                             burned = features.rasterize(shapes=shapes, out_shape=out_arr.shape, fill=0, transform=dst.transform, all_touched=True)
                             dst.write_band(1, burned)
